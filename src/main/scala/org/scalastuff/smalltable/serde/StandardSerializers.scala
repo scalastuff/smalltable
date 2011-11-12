@@ -1,5 +1,6 @@
 package org.scalastuff.smalltable.serde
 import me.prettyprint.cassandra.serializers.BytesArraySerializer
+import org.scalastuff.scalabeans.Enum
 import org.scalastuff.scalabeans.types._
 import me.prettyprint.cassandra.serializers._
 import java.nio.ByteBuffer
@@ -16,13 +17,13 @@ object StandardSerializers {
   val timeUuidSerializer = TimeUUIDSerializer.get()
 
   val byteSerializer = new AbstractSerializer[Byte] {
-    override def toByteBuffer(v: Byte) = {
+    def toByteBuffer(v: Byte) = {
       val bb = ByteBuffer.allocate(1)
       bb.put(v)
       bb.rewind()
       bb
     }
-    override def fromByteBuffer(buffer: ByteBuffer): Byte = buffer.get()
+    def fromByteBuffer(buffer: ByteBuffer): Byte = buffer.get()
     override def fromBytes(buffer: Array[Byte]): Byte = buffer(0)
   }
 
@@ -66,16 +67,11 @@ object StandardSerializers {
     override def fromBytes(buffer: Array[Byte]): Float = wrapped.fromBytes(buffer).floatValue
     override def getComparatorType = wrapped.getComparatorType
   }
-  val booleanSerializer = new AbstractSerializer[Boolean] {
-    val wrapped = BooleanSerializer.get()
+  val booleanSerializer = new TypeConvertingSerializer[Boolean, java.lang.Boolean]((v => v), _.booleanValue)(BooleanSerializer.get())  
 
-    override def toByteBuffer(v: Boolean) = wrapped.toByteBuffer(v)
-    override def fromByteBuffer(buffer: ByteBuffer): Boolean = wrapped.fromByteBuffer(buffer).booleanValue
-    override def fromBytes(buffer: Array[Byte]): Boolean = wrapped.fromBytes(buffer).booleanValue
-    override def getComparatorType = wrapped.getComparatorType
-  }
-
-  val bigDecimalSerializer = new AbstractSerializer[BigDecimal] {
+  val bigDecimalStringSerializer = new TypeConvertingSerializer[BigDecimal, String](_.toString, BigDecimal(_))(stringSerializer)
+  
+  val bigDecimalBytesSerializer = new AbstractSerializer[BigDecimal] {
 
     /**
      * The bytes of the ByteBuffer are made up of 4 bytes of int containing the scale
@@ -116,6 +112,8 @@ object StandardSerializers {
     //override def getComparatorType = TODO: add Decimal comparator type when it is implemented
   }
 
+  //TODO: collection serializer
+  //TODO: array serializer
   def optionSerializer(innerType: ScalaType, registry: SerializersRegistry) = {
     new AbstractSerializer[Option[Any]] {
       val innerTypeSerializer = registry.forType[Any](innerType)
@@ -133,15 +131,18 @@ object StandardSerializers {
     }
   }
   
+  def enumStringSerializer[A <: AnyRef](enum: Enum[A]) = new TypeConvertingSerializer[A, String](enum.nameOf(_), enum.valueOf(_).get)(stringSerializer)
+  def enumOrdinalSerializer[A <: AnyRef](enum: Enum[A]) = new TypeConvertingSerializer[A, Int](enum.ordinalOf(_), enum.valueOf(_).get)(intSerializer)
+  
   val registry =
     new SerializersRegistry(
       Map(
         ByteType -> WrappedSerializer(byteSerializer),
         ShortType -> WrappedSerializer(shortSerializer),
         IntType -> WrappedSerializer(intSerializer),
-        LongType -> WrappedSerializer(longSerializer),
+        LongType -> WrappedSerializer(LongSerializer.get()),
         DoubleType -> WrappedSerializer(doubleSerializer),
         FloatType -> WrappedSerializer(floatSerializer),
         BooleanType -> WrappedSerializer(booleanSerializer),
-        BigDecimalType -> WrappedSerializer(bigDecimalSerializer)))
+        BigDecimalType -> WrappedSerializer(bigDecimalStringSerializer)))
 }

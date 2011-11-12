@@ -51,22 +51,16 @@ class SerializersRegistry(
     if (!(mf >:> ManifestFactory.manifestOf(scalaType)))
       throw new RuntimeException("Cannot get serializer: runtime type %s is not assignable to compile time type %s.".
         format(scalaType, mf))
-    
+
     typeSerializers.get(scalaType) match {
       case Some(wrappedSerializer) => wrappedSerializer.ser.asInstanceOf[Serializer[A]]
       case None => scalaType match {
         case OptionType(innerType) => StandardSerializers.optionSerializer(innerType, this).asInstanceOf[Serializer[A]]
+        case EnumType(enum)        => StandardSerializers.enumStringSerializer[AnyRef](enum).asInstanceOf[Serializer[A]]
         case _                     => SerializerTypeInferer.getSerializer(scalaType.erasure)
       }
     }
   }
-}
-
-object SerializersRegistry {
-  // reserved field names
-  final val KEY = "KEY"
-  final val COLUMN_NAME = "COLUMN_NAME"
-  final val SUPER_COLUMN_NAME = "SUPER_COLUMN_NAME"
 }
 
 case class WrappedSerializer[A: Manifest](ser: Serializer[A]) {

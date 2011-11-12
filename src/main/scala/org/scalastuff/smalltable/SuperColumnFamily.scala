@@ -53,15 +53,25 @@ abstract class SuperColumnFamily(_name: String) extends ColumnOrSuperColumnFamil
     def superColumnNameProperty(superColumnNamePropertyName: String) = {
       val bd = descriptorOf[B]
 
-      new MaterializedViewBuilderDD[B](
+      val superColumnNameField = PropertyMapper[B, SuperColumnName](bd(superColumnNamePropertyName), superColumnNameSerializer)
+      new MaterializedSCFViewBuilderCV(
         keyField,
-        PropertyMapper[B, SuperColumnName](bd(superColumnNamePropertyName), superColumnNameSerializer))
+        superColumnNameField,
+        new MaterializedViewSuperColumnDKDC[B, scf.type](scf, keyField, rowKeySerializer, superColumnNameField, superColumnNameSerializer, _: OCsMapper[B]),
+        new MaterializedViewSubColumnDDD[B, scf.type](scf, keyField, rowKeySerializer, superColumnNameField, superColumnNameSerializer, _: OCMapper[B, _, _], columnNameSerializer),
+        new MaterializedViewSubColumnDDS[B, scf.type](scf, keyField, rowKeySerializer, superColumnNameField, superColumnNameSerializer, _: StaticColumnMapper[B, _, _])
+      )
     }
 
     def superColumnName(superColumnName: SuperColumnName) = {
-      new MaterializedViewBuilderDS[B](
+      val superColumnNameField = new StaticMapper[B, SuperColumnName](superColumnName, superColumnNameSerializer)
+      new MaterializedSCFViewBuilderCV(
         keyField,
-        new StaticMapper[B, SuperColumnName](superColumnName, superColumnNameSerializer))
+        superColumnNameField,
+        new MaterializedViewSuperColumnDKSC[B, scf.type](scf, keyField, rowKeySerializer, superColumnNameField, _: OCsMapper[B]),
+        new MaterializedViewSubColumnDSD[B, scf.type](scf, keyField, rowKeySerializer, superColumnNameField, _: OCMapper[B, _, _], columnNameSerializer),
+        new MaterializedViewSubColumnDSS[B, scf.type](scf, keyField, rowKeySerializer, superColumnNameField, _: StaticColumnMapper[B, _, _])
+      )
     }
   }
 
@@ -74,275 +84,46 @@ abstract class SuperColumnFamily(_name: String) extends ColumnOrSuperColumnFamil
     def superColumnNameProperty(superColumnNamePropertyName: String) = {
       val bd = descriptorOf[B]
 
-      new MaterializedViewBuilderSD[B](
+      val superColumnNameField = PropertyMapper[B, SuperColumnName](bd(superColumnNamePropertyName), superColumnNameSerializer)
+      new MaterializedSCFViewBuilderCV(
         keyField,
-        PropertyMapper[B, SuperColumnName](bd(superColumnNamePropertyName), superColumnNameSerializer))
+        superColumnNameField,
+        new MaterializedViewSuperColumnSKDC[B, scf.type](scf, keyField, superColumnNameField, superColumnNameSerializer, _: OCsMapper[B]),
+        new MaterializedViewSubColumnSDD[B, scf.type](scf, keyField, superColumnNameField, superColumnNameSerializer, _: OCMapper[B, _, _], columnNameSerializer),
+        new MaterializedViewSubColumnSDS[B, scf.type](scf, keyField, superColumnNameField, superColumnNameSerializer, _: StaticColumnMapper[B, _, _])
+      )
     }
 
     def superColumnName(superColumnName: SuperColumnName) = {
-      new MaterializedViewBuilderSS[B](
+      val superColumnNameField = new StaticMapper[B, SuperColumnName](superColumnName, superColumnNameSerializer)
+      new MaterializedSCFViewBuilderCV(
         keyField,
-        new StaticMapper[B, SuperColumnName](superColumnName, superColumnNameSerializer))
+        superColumnNameField,
+        new MaterializedViewSuperColumnSKSC[B, scf.type](scf, keyField, superColumnNameField, _: OCsMapper[B]),
+        new MaterializedViewSubColumnSSD[B, scf.type](scf, keyField, superColumnNameField, _: OCMapper[B, _, _], columnNameSerializer),
+        new MaterializedViewSubColumnSSS[B, scf.type](scf, keyField, superColumnNameField, _: StaticColumnMapper[B, _, _])
+      )
     }
   }
 
-  class MaterializedViewBuilderDD[B <: AnyRef](
+  class MaterializedSCFViewBuilderCV[B <: AnyRef, SCNSV, DCNV, SCNV](
     keyField: Mapper[B, KeyValue],
-    superColumnNameField: Mapper[B, SuperColumnName])(implicit beanMf: Manifest[B],
-                                                      keyMf: Manifest[KeyValue],
-                                                      scnMf: Manifest[SuperColumnName],
-                                                      cnMf: Manifest[ColumnName]) {
+    superColumnNameField: Mapper[B, SuperColumnName],
+    createStaticColumnNamesView: OCsMapper[B] => SCNSV,
+    createDynamicColumnNameView: OCMapper[B, _, _] => DCNV,
+    createStaticColumnNameView: StaticColumnMapper[B, _, _] => SCNV)(implicit beanMf: Manifest[B], columnNameMf: Manifest[ColumnName])
+    extends MaterializedViewBuilderCV[B, ColumnName, DCNV, SCNV](
+      keyField.propertyNames ++ superColumnNameField.propertyNames,
+      serializers,
+      columnNameSerializer,
+      createDynamicColumnNameView,
+      createStaticColumnNameView) {
 
-    @implicitNotFound(msg = "Static column names can be used only for the Column Families where ColumnName type is String")
+    @implicitNotFound(msg = "Static column names can be used only for the Super Column Families where ColumnName type is String")
     def staticColumnNames(exclude: Iterable[String] = Nil, rename: Iterable[(String, String)] = Nil)(implicit ev: ColumnName =:= String) = {
       val mapper = new OCsMapper[B](serializers, keyField.propertyNames ++ superColumnNameField.propertyNames ++ exclude, rename)
       addColumnDefinitions(mapper.columnDefinitions())
-      new MaterializedViewSuperColumnDKDC[B, scf.type](scf, keyField, rowKeySerializer, superColumnNameField, superColumnNameSerializer, mapper)
-    }
-
-    def columnNameProperty(subColumnNamePropertyName: String) = new {
-      def valueProperty(valuePropertyName: String) = {
-        val bd = descriptorOf[B]
-
-        val columnMapper =
-          new DynamicColumnMapper[B, ColumnName, Any](
-            PropertyMapper[B, ColumnName](bd(subColumnNamePropertyName), columnNameSerializer),
-            PropertyMapper[B](bd(valuePropertyName), serializers))
-
-        new MaterializedViewSubColumnDDD[B, scf.type](scf, keyField, rowKeySerializer, superColumnNameField, superColumnNameSerializer, columnMapper, columnNameSerializer)
-      }
-
-      def valueObject() = {
-        val bd = descriptorOf[B]
-
-        val columnMapper =
-          new DynamicColumnMapper[B, ColumnName, Array[Byte]](
-            PropertyMapper[B, ColumnName](bd(subColumnNamePropertyName), columnNameSerializer),
-            new ObjectMapper[B](keyField.propertyNames ++ superColumnNameField.propertyNames))
-
-        new MaterializedViewSubColumnDDD[B, scf.type](scf, keyField, rowKeySerializer, superColumnNameField, superColumnNameSerializer, columnMapper, columnNameSerializer)
-      }
-    }
-
-    def columnName(columnName: ColumnName) = new {
-      def valueProperty(valuePropertyName: String) = {
-        val bd = descriptorOf[B]
-
-        val columnMapper =
-          new StaticColumnMapper[B, ColumnName, Any](
-            columnName,
-            columnNameSerializer,
-            PropertyMapper[B](bd(valuePropertyName), serializers))
-
-        new MaterializedViewSubColumnDDS[B, scf.type](scf, keyField, rowKeySerializer, superColumnNameField, superColumnNameSerializer, columnMapper)
-      }
-
-      def valueObject() = {
-        val bd = descriptorOf[B]
-
-        val columnMapper =
-          new StaticColumnMapper[B, ColumnName, Array[Byte]](
-            columnName,
-            columnNameSerializer,
-            new ObjectMapper[B](keyField.propertyNames ++ superColumnNameField.propertyNames))
-
-        new MaterializedViewSubColumnDDS[B, scf.type](scf, keyField, rowKeySerializer, superColumnNameField, superColumnNameSerializer, columnMapper)
-      }
-    }
-  }
-
-  class MaterializedViewBuilderSD[B <: AnyRef](
-    keyField: StaticMapper[B, KeyValue],
-    superColumnNameField: Mapper[B, SuperColumnName])(implicit beanMf: Manifest[B],
-                                                      keyMf: Manifest[KeyValue],
-                                                      scnMf: Manifest[SuperColumnName],
-                                                      cnMf: Manifest[ColumnName]) {
-
-    @implicitNotFound(msg = "Static column names can be used only for the Column Families where ColumnName type is String")
-    def staticColumnNames(exclude: Iterable[String] = Nil, rename: Iterable[(String, String)] = Nil)(implicit ev: ColumnName =:= String) = {
-      val mapper = new OCsMapper[B](serializers, keyField.propertyNames ++ superColumnNameField.propertyNames ++ exclude, rename)
-      addColumnDefinitions(mapper.columnDefinitions())
-      new MaterializedViewSuperColumnSKDC[B, scf.type](scf, keyField, superColumnNameField, superColumnNameSerializer, mapper)
-    }
-
-    def columnNameProperty(subColumnNamePropertyName: String) = new {
-      def valueProperty(valuePropertyName: String) = {
-        val bd = descriptorOf[B]
-
-        val columnMapper =
-          new DynamicColumnMapper[B, ColumnName, Any](
-            PropertyMapper[B, ColumnName](bd(subColumnNamePropertyName), columnNameSerializer),
-            PropertyMapper[B](bd(valuePropertyName), serializers))
-
-        new MaterializedViewSubColumnSDD[B, scf.type](scf, keyField, superColumnNameField, superColumnNameSerializer, columnMapper, columnNameSerializer)
-      }
-
-      def valueObject() = {
-        val bd = descriptorOf[B]
-
-        val columnMapper =
-          new DynamicColumnMapper[B, ColumnName, Array[Byte]](
-            PropertyMapper[B, ColumnName](bd(subColumnNamePropertyName), columnNameSerializer),
-            new ObjectMapper[B](keyField.propertyNames ++ superColumnNameField.propertyNames))
-
-        new MaterializedViewSubColumnSDD[B, scf.type](scf, keyField, superColumnNameField, superColumnNameSerializer, columnMapper, columnNameSerializer)
-      }
-    }
-
-    def columnName(columnName: ColumnName) = new {
-      def valueProperty(valuePropertyName: String) = {
-        val bd = descriptorOf[B]
-
-        val columnMapper =
-          new StaticColumnMapper[B, ColumnName, Any](
-            columnName,
-            columnNameSerializer,
-            PropertyMapper[B](bd(valuePropertyName), serializers))
-
-        new MaterializedViewSubColumnSDS[B, scf.type](scf, keyField, superColumnNameField, superColumnNameSerializer, columnMapper)
-      }
-
-      def valueObject() = {
-        val bd = descriptorOf[B]
-
-        val columnMapper =
-          new StaticColumnMapper[B, ColumnName, Array[Byte]](
-            columnName,
-            columnNameSerializer,
-            new ObjectMapper[B](keyField.propertyNames ++ superColumnNameField.propertyNames))
-
-        new MaterializedViewSubColumnSDS[B, scf.type](scf, keyField, superColumnNameField, superColumnNameSerializer, columnMapper)
-      }
-    }
-  }
-
-  class MaterializedViewBuilderDS[B <: AnyRef](
-    keyField: Mapper[B, KeyValue],
-    superColumnNameField: StaticMapper[B, SuperColumnName])(implicit beanMf: Manifest[B],
-                                                            keyMf: Manifest[KeyValue],
-                                                            scnMf: Manifest[SuperColumnName],
-                                                            cnMf: Manifest[ColumnName]) {
-
-    @implicitNotFound(msg = "Static column names can be used only for the Column Families where ColumnName type is String")
-    def staticColumnNames(exclude: Iterable[String] = Nil, rename: Iterable[(String, String)] = Nil)(implicit ev: ColumnName =:= String) = {
-      val mapper = new OCsMapper[B](serializers, keyField.propertyNames ++ superColumnNameField.propertyNames ++ exclude, rename)
-      addColumnDefinitions(mapper.columnDefinitions())
-      new MaterializedViewSuperColumnDKSC[B, scf.type](scf, keyField, rowKeySerializer, superColumnNameField, mapper)
-    }
-
-    def columnNameProperty(subColumnNamePropertyName: String) = new {
-      def valueProperty(valuePropertyName: String) = {
-        val bd = descriptorOf[B]
-
-        val columnMapper =
-          new DynamicColumnMapper[B, ColumnName, Any](
-            PropertyMapper[B, ColumnName](bd(subColumnNamePropertyName), columnNameSerializer),
-            PropertyMapper[B](bd(valuePropertyName), serializers))
-
-        new MaterializedViewSubColumnDSD[B, scf.type](scf, keyField, rowKeySerializer, superColumnNameField, columnMapper, columnNameSerializer)
-      }
-
-      def valueObject() = {
-        val bd = descriptorOf[B]
-
-        val columnMapper =
-          new DynamicColumnMapper[B, ColumnName, Array[Byte]](
-            PropertyMapper[B, ColumnName](bd(subColumnNamePropertyName), columnNameSerializer),
-            new ObjectMapper[B](keyField.propertyNames ++ superColumnNameField.propertyNames))
-
-        new MaterializedViewSubColumnDSD[B, scf.type](scf, keyField, rowKeySerializer, superColumnNameField, columnMapper, columnNameSerializer)
-      }
-    }
-
-    def columnName(columnName: ColumnName) = new {
-      def valueProperty(valuePropertyName: String) = {
-        val bd = descriptorOf[B]
-
-        val columnMapper =
-          new StaticColumnMapper[B, ColumnName, Any](
-            columnName,
-            columnNameSerializer,
-            PropertyMapper[B](bd(valuePropertyName), serializers))
-
-        new MaterializedViewSubColumnDSS[B, scf.type](scf, keyField, rowKeySerializer, superColumnNameField, columnMapper)
-      }
-
-      def valueObject() = {
-        val bd = descriptorOf[B]
-
-        val columnMapper =
-          new StaticColumnMapper[B, ColumnName, Array[Byte]](
-            columnName,
-            columnNameSerializer,
-            new ObjectMapper[B](keyField.propertyNames ++ superColumnNameField.propertyNames))
-
-        new MaterializedViewSubColumnDSS[B, scf.type](scf, keyField, rowKeySerializer, superColumnNameField, columnMapper)
-      }
-    }
-  }
-
-  class MaterializedViewBuilderSS[B <: AnyRef](
-    keyField: StaticMapper[B, KeyValue],
-    superColumnNameField: StaticMapper[B, SuperColumnName])(implicit beanMf: Manifest[B],
-                                                            keyMf: Manifest[KeyValue],
-                                                            scnMf: Manifest[SuperColumnName],
-                                                            cnMf: Manifest[ColumnName]) {
-
-    @implicitNotFound(msg = "Static column names can be used only for the Column Families where ColumnName type is String")
-    def staticColumnNames(exclude: Iterable[String] = Nil, rename: Iterable[(String, String)] = Nil)(implicit ev: ColumnName =:= String) = {
-      val mapper = new OCsMapper[B](serializers, keyField.propertyNames ++ superColumnNameField.propertyNames ++ exclude, rename)
-      addColumnDefinitions(mapper.columnDefinitions())
-      new MaterializedViewSuperColumnSKSC[B, scf.type](scf, keyField, superColumnNameField, mapper)
-    }
-
-    def columnNameProperty(subColumnNamePropertyName: String) = new {
-      def valueProperty(valuePropertyName: String) = {
-        val bd = descriptorOf[B]
-
-        val columnMapper =
-          new DynamicColumnMapper[B, ColumnName, Any](
-            PropertyMapper[B, ColumnName](bd(subColumnNamePropertyName), columnNameSerializer),
-            PropertyMapper[B](bd(valuePropertyName), serializers))
-
-        new MaterializedViewSubColumnSSD[B, scf.type](scf, keyField, superColumnNameField, columnMapper, columnNameSerializer)
-      }
-
-      def valueObject() = {
-        val bd = descriptorOf[B]
-
-        val columnMapper =
-          new DynamicColumnMapper[B, ColumnName, Array[Byte]](
-            PropertyMapper[B, ColumnName](bd(subColumnNamePropertyName), columnNameSerializer),
-            new ObjectMapper[B](keyField.propertyNames ++ superColumnNameField.propertyNames))
-
-        new MaterializedViewSubColumnSSD[B, scf.type](scf, keyField, superColumnNameField, columnMapper, columnNameSerializer)
-      }
-    }
-
-    def columnName(columnName: ColumnName) = new {
-      def valueProperty(valuePropertyName: String) = {
-        val bd = descriptorOf[B]
-
-        val columnMapper =
-          new StaticColumnMapper[B, ColumnName, Any](
-            columnName,
-            columnNameSerializer,
-            PropertyMapper[B](bd(valuePropertyName), serializers))
-
-        new MaterializedViewSubColumnSSS[B, scf.type](scf, keyField, superColumnNameField, columnMapper)
-      }
-
-      def valueObject() = {
-        val bd = descriptorOf[B]
-
-        val columnMapper =
-          new StaticColumnMapper[B, ColumnName, Array[Byte]](
-            columnName,
-            columnNameSerializer,
-            new ObjectMapper[B](keyField.propertyNames ++ superColumnNameField.propertyNames))
-
-        new MaterializedViewSubColumnSSS[B, scf.type](scf, keyField, superColumnNameField, columnMapper)
-      }
+      createStaticColumnNamesView(mapper)
     }
   }
 }

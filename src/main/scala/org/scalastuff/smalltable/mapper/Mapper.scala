@@ -92,6 +92,13 @@ class ObjectMapper[B <: AnyRef](excludeProperties: Iterable[String])(implicit be
   val propertyNames = bd.properties.map(_.name).filter(name => !excludeProperties.contains(name))
 }
 
+class FunctionMapper[B <: AnyRef, V](f: B => V, val valueSerializer: Serializer[V]) extends Mapper[B, V] {
+  def toValue(bean: B): V = f(bean)
+  def toBeanBuilder(value: V, beanBuilder: BeanBuilder): Unit = {}
+  override def bytesToBeanBuilder(buffer: ByteBuffer, beanBuilder: BeanBuilder): Unit = {}
+  def propertyNames: Iterable[String] = Nil
+}
+
 /**
  * Object to Columns mapper
  */
